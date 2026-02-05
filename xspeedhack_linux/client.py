@@ -65,13 +65,26 @@ def inject_shared_object(
     if not lib_path.exists():
         raise FileNotFoundError(f"Shared library not found: {lib_path}")
 
-    gdb_cmd = [gdb_path, "-n", "-q", "-batch", "-ex", f"attach {pid}"]
+    gdb_cmd = [
+        gdb_path,
+        "-n",
+        "-q",
+        "-batch",
+        "-ex",
+        "set pagination off",
+        "-ex",
+        f"attach {pid}",
+    ]
     if socket_path:
         escaped_path = _gdb_escape(socket_path)
         gdb_cmd += ["-ex", f'call (int)setenv("XSH_SOCKET_PATH","{escaped_path}",1)']
     gdb_cmd += [
         "-ex",
-        f'call (void*) dlopen("{_gdb_escape(str(lib_path))}", 1)',
+        f'set $xsh_handle = (void*) dlopen("{_gdb_escape(str(lib_path))}", 1)',
+        "-ex",
+        'printf "XSH_DLOPEN_HANDLE=%p\\n", $xsh_handle',
+        "-ex",
+        'printf "XSH_DLOPEN_ERROR=%s\\n", (char*)dlerror()',
         "-ex",
         "detach",
         "-ex",
@@ -79,7 +92,7 @@ def inject_shared_object(
     ]
 
     try:
-        subprocess.run(
+        proc = subprocess.run(
             gdb_cmd,
             check=True,
             stdout=subprocess.PIPE,
@@ -93,6 +106,13 @@ def inject_shared_object(
         if detail:
             detail = f": {detail}"
         raise RuntimeError(f"gdb injection failed{detail}") from exc
+
+    out = proc.stdout or ""
+    handle_line = next((line for line in out.splitlines() if line.startswith("XSH_DLOPEN_HANDLE=")), "")
+    if "(nil)" in handle_line or handle_line.endswith("0x0"):
+        err_line = next((line for line in out.splitlines() if line.startswith("XSH_DLOPEN_ERROR=")), "")
+        detail = f" ({err_line})" if err_line else ""
+        raise RuntimeError(f"dlopen returned null while injecting into pid={pid}{detail}")
 
 
 class SpeedHackClient:
@@ -208,7 +228,7 @@ def attach(
     *,
     gdb_path: str = "gdb",
     socket_path: Optional[str] = None,
-    wait_for_socket: float = 1.0,
+    wait_for_socket: float = 5.0,
 ) -> SpeedHackClient:
     return SpeedHackClient(
         process_id=pid,
