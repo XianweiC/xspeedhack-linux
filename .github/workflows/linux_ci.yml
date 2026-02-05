@@ -1,0 +1,38 @@
+name: Linux CI (Build + Test + Wheel)
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux-build-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build pytest scikit-build-core
+          python -m pip install -e ".[dev]"
+
+      - name: Run tests
+        run: pytest -q tests
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Upload wheel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: xspeedhack-linux-dist
+          path: dist/*
+          if-no-files-found: error
